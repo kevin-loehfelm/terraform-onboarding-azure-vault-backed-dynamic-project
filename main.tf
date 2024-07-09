@@ -23,12 +23,19 @@ Vault
 
 # Resource(s): Azure Secrets Engine Role for Terraform Workload Identity
 resource "vault_azure_secret_backend_role" "this" {
-  for_each              = local.workspaces
-  backend               = "azure" #TODO
-  role                  = "project-${var.project_name}-${each.key}"
-  application_object_id = azuread_application.this[each.key].object_id
-  ttl                   = "300" #TODO
-  max_ttl               = "600" #TODO
+  for_each = local.workspaces
+  backend  = "azure" #TODO
+  role     = "project-${var.project_name}-${each.key}"
+  azure_groups {
+    group_name = azuread_group.this.display_name
+  }
+  ttl     = "300" #TODO
+  max_ttl = "600" #TODO
+  tags = [
+    "platform:azure",
+    "env:${each.key}",
+    "project:${var.project_name}"
+  ]
 }
 
 # Resource(s): Vault Policy to Authorize Terraform Workload Identity
@@ -36,7 +43,7 @@ resource "vault_policy" "this" {
   for_each = local.workspaces
   name     = "project-${var.project_name}-${each.key}" #TODO
   policy = templatefile("${path.module}/policy.tftpl", {
-    service_principal  = azuread_application.this[each.key].display_name
+    service_principal  = "project-${var.project_name}-${each.key}"
     azure_secrets_path = "azure" #TODO
     azure_secrets_role = vault_azure_secret_backend_role.this[each.key].role
   })
@@ -151,35 +158,11 @@ data "azuread_service_principal" "msgraph" {
   client_id = data.azuread_application_published_app_ids.well_known.result.MicrosoftGraph
 }
 
-# Resource(s): Azure Application for Terraform Workload Identity
-resource "azuread_application" "this" {
-  for_each     = local.workspaces
-  display_name = "project-${var.project_name}-${each.key}"
-  description  = "Service Principal for Terraform Workload Identity"
-
-  required_resource_access {
-    resource_app_id = data.azuread_service_principal.msgraph.client_id
-
-    resource_access {
-      id   = data.azuread_service_principal.msgraph.app_role_ids["Application.Read.All"]
-      type = "Role"
-    }
-  }
-}
-
-# Resource(s): Azure Service Principal for Terraform Workload Identity
-resource "azuread_service_principal" "this" {
-  for_each  = local.workspaces
-  client_id = azuread_application.this[each.key].client_id
-  owners    = [data.azuread_client_config.current.object_id]
-}
-
-# Resource(s): Grant Admin Privileges for Application.Read.All Service Principal permission
-resource "azuread_app_role_assignment" "read_all" {
-  for_each            = local.workspaces
-  app_role_id         = data.azuread_service_principal.msgraph.app_role_ids["Application.Read.All"]
-  principal_object_id = azuread_service_principal.this[each.key].object_id
-  resource_object_id  = data.azuread_service_principal.msgraph.object_id
+# Resource(s): Azure Security Group
+resource "azuread_group" "this" {
+  display_name     = "project-${var.project_name}"
+  owners           = [data.azuread_client_config.current.object_id]
+  security_enabled = true
 }
 
 /**********************
